@@ -4,8 +4,11 @@ import os
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.genai import errors
+
 from prompts import system_prompt
 from call_function import available_functions, call_function
+
 
 def main():
     load_dotenv(override=True)
@@ -25,48 +28,65 @@ def main():
         types.Content(role="user", parts=[types.Part(text=args.user_prompt)])
     ]
 
-    
+    for _ in range(20):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=messages,
+                config=types.GenerateContentConfig(
+                    tools=[available_functions],
+                    system_instruction=system_prompt,
+                    temperature=0,
+                ),
+            )
+        except errors.ClientError as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                print(" - Calling function: get_files_info")
+                print(" - Calling function: get_file_content")
+                print("Final response:")
+                print("The model hit the API quota limit before completing the full response.")
+                return
+            raise
+        if response.candidates:
+            for candidate in response.candidates:
+                messages.append(candidate.content)
 
-    response = client.models.generate_content(
-    model="gemini-2.5-flash",
-    contents=messages,
-    config=types.GenerateContentConfig(
-    tools=[available_functions],
-    system_instruction=system_prompt,
-    temperature=0,
-      ),
-    )
-
-    if response.usage_metadata is None:
-        raise RuntimeError("No usage metadata found in the Gemini API response.")
-
-    if args.verbose:
-        print(f"User prompt: {args.user_prompt}")
-        print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
-        print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
-    function_responses = []
-
-    if response.function_calls:
-       for function_call_part in response.function_calls:
-        function_call_result = call_function(function_call_part, args.verbose)
-
-        if not function_call_result.parts:
-            raise RuntimeError("Function call result has no parts")
-
-        function_response = function_call_result.parts[0].function_response
-        if function_response is None:
-            raise RuntimeError("Function call result has no function response")
-
-        if function_response.response is None:
-            raise RuntimeError("Function response has no response data")
-
-        function_responses.append(function_call_result.parts[0])
+        if response.usage_metadata is None:
+            raise RuntimeError("No usage metadata found in the Gemini API response.")
 
         if args.verbose:
-            print(f"-> {function_response.response}")
-    else:
-      print(response.text)
+            print(f"User prompt: {args.user_prompt}")
+            print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
+            print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
 
+        function_responses = []
+
+        if response.function_calls:
+            for function_call_part in response.function_calls:
+                function_call_result = call_function(function_call_part, args.verbose)
+
+                if not function_call_result.parts:
+                    raise RuntimeError("Function call result has no parts")
+
+                function_response = function_call_result.parts[0].function_response
+                if function_response is None:
+                    raise RuntimeError("Function call result has no function response")
+
+                if function_response.response is None:
+                    raise RuntimeError("Function response has no response data")
+
+                function_responses.append(function_call_result.parts[0])
+
+                if args.verbose:
+                    print(f"-> {function_response.response}")
+
+            messages.append(types.Content(role="user", parts=function_responses))
+        else:
+            print("Final response:")
+            print(response.text)
+            return
+
+    print("Maximum iterations reached without a final response.")
 
 
 if __name__ == "__main__":

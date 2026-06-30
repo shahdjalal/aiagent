@@ -12,9 +12,9 @@ class Calculator:
             "/": lambda a, b: a / b,
         }
         self.precedence: dict[str, int] = {
-            "+": 1,
+            "+": 2,
             "-": 1,
-            "*": 2,
+            "*": 3,
             "/": 2,
         }
 
